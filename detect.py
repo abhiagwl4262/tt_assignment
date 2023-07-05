@@ -20,21 +20,38 @@ from utils.general import (
 )
 from utils.torch_utils import select_device, smart_inference_mode
 
-def filter(preds):
-    return
+
+def conditional_filter_pred(preds):
+    if preds.shape[0] > 1:
+        area = np.multiply(preds[:, 2], preds[:, 3])
+        cls_ids = preds[:, 4]
+        unique_cls_ids = np.unique(cls_ids)
+
+        if unique_cls_ids.shape[0] == 1:
+            large_idx = np.argmax(area)
+            return [preds[large_idx]]
+        else:
+            keep = preds[:, -1] > 0
+            _preds = preds[keep]
+            area = area[keep]
+            large_idx = np.argmax(area)
+            return [_preds[large_idx]]
+    else:
+        return preds
+
 
 @smart_inference_mode()
 def run(
     output,
-    weights,  
-    source,  
-    imgsz=(640, 640),  
-    conf_thres=0.4,  
+    weights,
+    source,
+    imgsz=(640, 640),
+    conf_thres=0.4,
     iou_thres=0.4,
     max_det=1000,
     device="",
     save_conf=False,
-    visualize=False
+    visualize=False,
 ):
     source = str(source)
 
@@ -67,7 +84,6 @@ def run(
     }
 
     for path, im, im0s, _, s in dataset:
-
         with dt[0]:
             im = torch.from_numpy(im).to(model.device)
             im = im.half() if model.fp16 else im.float()  # uint8 to fp16/32
@@ -86,13 +102,15 @@ def run(
             )
 
         # Process predictions
+        final_pred = []
+        p, im0 = path, im0s.copy()
+        h, w = im0s.shape[:2]
+        p = Path(p)  # to Path
+        s += "%gx%g " % im.shape[2:]  # print string
+        gn = torch.tensor(im0.shape)[[1, 0, 1, 0]]  # normalization gain whwh
+        image_name = os.path.basename(path)
         for i, det in enumerate(pred):  # per image
             seen += 1
-            p, im0 = path, im0s.copy()
-            h, w = im0s.shape[:2]
-            p = Path(p)  # to Path
-            s += "%gx%g " % im.shape[2:]  # print string
-            gn = torch.tensor(im0.shape)[[1, 0, 1, 0]]  # normalization gain whwh
             if len(det):
                 # Rescale boxes from img_size to im0 size
                 det[:, :4] = scale_boxes(im.shape[2:], det[:, :4], im0.shape).round()
@@ -103,7 +121,6 @@ def run(
                     s += f"{n} {names[int(c)]}{'s' * (n > 1)}, "  # add to string
 
                 # Write results
-                image_name = os.path.basename(path)
                 for *xyxy, conf, cls in reversed(det):
                     xywh = (
                         (xyxy2xywh(torch.tensor(xyxy).view(1, 4)) / gn)
@@ -121,27 +138,35 @@ def run(
                     w_box = float(w_box) * w
                     h_box = float(h_box) * h
 
-                    x1 = int(xc - w_box / 2.0)
-                    y1 = int(yc - h_box / 2.0)
-                    x2 = int(xc + w_box / 2.0)
-                    y2 = int(yc + h_box / 2.0)
+                    final_pred.append([xc, yc, w_box, h_box, label])
 
-                    labels_dict["filename"].append(image_name)
-                    labels_dict["xmin"].append(x1)
-                    labels_dict["ymin"].append(y1)
-                    labels_dict["xmax"].append(x2)
-                    labels_dict["ymax"].append(y2)
-                    labels_dict["class"].append(label)
+                    # if visualize:
+                    #     cv2.rectangle(im0s, (x1, y1), (x2, y2), (0, 255, 0), 2)
 
-                    if visualize:
-                        cv2.rectangle(im0s, (x1, y1), (x2, y2), (0, 255, 0), 2)
-            else:
+                final_pred = np.array(final_pred)
+                [[xc, yc, w_box, h_box, label]] = conditional_filter_pred(final_pred)
+                x1 = int(xc - w_box / 2.0)
+                y1 = int(yc - h_box / 2.0)
+                x2 = int(xc + w_box / 2.0)
+                y2 = int(yc + h_box / 2.0)
+
+                if visualize:
+                    cv2.rectangle(im0s, (x1, y1), (x2, y2), (0, 255, 0), 2)
+
                 labels_dict["filename"].append(image_name)
-                labels_dict["xmin"].append(0)
-                labels_dict["ymin"].append(0)
-                labels_dict["xmax"].append(1)
-                labels_dict["ymax"].append(1)
-                labels_dict["class"].append(0)
+                labels_dict["xmin"].append(x1)
+                labels_dict["ymin"].append(y1)
+                labels_dict["xmax"].append(x2)
+                labels_dict["ymax"].append(y2)
+                labels_dict["class"].append(label)
+
+        if not len(final_pred):
+            labels_dict["filename"].append(image_name)
+            labels_dict["xmin"].append(0)
+            labels_dict["ymin"].append(0)
+            labels_dict["xmax"].append(1)
+            labels_dict["ymax"].append(1)
+            labels_dict["class"].append(0)
 
         if visualize:
             out_path = os.path.join(output, "plots", image_name)
@@ -152,16 +177,12 @@ def run(
             f"{s}{'' if len(det) else '(no detections), '}{dt[1].dt * 1E3:.1f}ms"
         )
 
-    # Print results
-    t = tuple(x.t / seen * 1e3 for x in dt)  # speeds per image
-    LOGGER.info(
-        f"Speed: %.1fms pre-process, %.1fms inference, %.1fms NMS per image at shape {(1, 3, *imgsz)}"
-        % t
-    )
-
     df = pd.DataFrame(labels_dict, index=None)
     np.savetxt(
-        f"{output}/results.csv", df, delimiter=";", fmt=["%s", "%d", "%d", "%d", "%d", "%d"]
+        f"{output}/results.csv",
+        df,
+        delimiter=";",
+        fmt=["%s", "%d", "%d", "%d", "%d", "%d"],
     )
 
 
@@ -207,8 +228,7 @@ def parse_opt():
     parser.add_argument(
         "--save-conf", action="store_true", help="save confidences in --save-txt labels"
     )
-    parser.add_argument('--visualize', action='store_true',
-                        help='visualize results')
+    parser.add_argument("--visualize", action="store_true", help="visualize results")
     opt = parser.parse_args()
     opt.imgsz *= 2 if len(opt.imgsz) == 1 else 1  # expand
     print_args(vars(opt))
