@@ -6,7 +6,6 @@ import pandas as pd
 from pathlib import Path
 import torch
 
-
 from models.common import DetectMultiBackend
 from utils.dataloaders import LoadImages
 from utils.general import (
@@ -21,6 +20,8 @@ from utils.general import (
 )
 from utils.torch_utils import select_device, smart_inference_mode
 
+def filter(preds):
+    return
 
 @smart_inference_mode()
 def run(
@@ -66,6 +67,7 @@ def run(
     }
 
     for path, im, im0s, _, s in dataset:
+
         with dt[0]:
             im = torch.from_numpy(im).to(model.device)
             im = im.half() if model.fp16 else im.float()  # uint8 to fp16/32
@@ -80,7 +82,7 @@ def run(
         # NMS
         with dt[2]:
             pred = non_max_suppression(
-                pred, conf_thres, iou_thres, None, False, max_det=max_det
+                pred, conf_thres, iou_thres, None, True, max_det=max_det
             )
 
         # Process predictions
