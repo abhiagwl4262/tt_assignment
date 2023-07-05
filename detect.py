@@ -1,18 +1,11 @@
-import os
-import cv2
-import sys
 import argparse
+import cv2
 import numpy as np
+import os
 import pandas as pd
 from pathlib import Path
-
 import torch
 
-FILE = Path(__file__).resolve()
-ROOT = FILE.parents[0]  # YOLOv5 root directory
-if str(ROOT) not in sys.path:
-    sys.path.append(str(ROOT))  # add ROOT to PATH
-ROOT = Path(os.path.relpath(ROOT, Path.cwd()))  # relative
 
 from models.common import DetectMultiBackend
 from utils.dataloaders import LoadImages
@@ -25,37 +18,35 @@ from utils.general import (
     print_args,
     scale_boxes,
     xyxy2xywh,
-    increment_path,
 )
 from utils.torch_utils import select_device, smart_inference_mode
 
 
 @smart_inference_mode()
 def run(
-    output=ROOT / "output",
-    weights=ROOT / "yolov5s.pt",  # model path or triton URL
-    source=ROOT / "data/images",  # file/dir/URL/glob/screen/0(webcam)
-    data=ROOT / "data/coco128.yaml",  # dataset.yaml path
+    output,
+    weights,  # model path or triton URL
+    source,  # file/dir/URL/glob/screen/0(webcam)
     imgsz=(640, 640),  # inference size (height, width)
     conf_thres=0.4,  # confidence threshold
     iou_thres=0.4,  # NMS IOU threshold
     max_det=1000,  # maximum detections per image
     device="",  # cuda device, i.e. 0 or 0,1,2,3 or cpu
-    save_txt=False,  # save results to *.txt
     save_conf=False,  # save confidences in --save-txt labels
-    visualize=True # save images with bbs
+    visualize=False # save images with bbs
 ):
     source = str(source)
 
     # # Directories
-    save_dir = increment_path(Path(output), exist_ok=True)  # increment run
-    (save_dir / "labels" if save_txt else save_dir).mkdir(
-        parents=True, exist_ok=True
-    )  # make dir
+    if visualize:
+        path = os.path.join(output, "plots")
+        Path(path).mkdir(parents=True, exist_ok=True)
+    else:
+        os.makedirs(output, exist_ok=True)
 
     # Load model
     device = select_device(device)
-    model = DetectMultiBackend(weights, device=device, dnn=False, data=data, fp16=False)
+    model = DetectMultiBackend(weights, device=device, dnn=False, data=None, fp16=False)
     stride, names, pt = model.stride, model.names, model.pt
     imgsz = check_img_size(imgsz, s=stride)  # check image size
 
@@ -112,37 +103,36 @@ def run(
                 # Write results
                 image_name = os.path.basename(path)
                 for *xyxy, conf, cls in reversed(det):
-                    if save_txt:  # Write to file
-                        xywh = (
-                            (xyxy2xywh(torch.tensor(xyxy).view(1, 4)) / gn)
-                            .view(-1)
-                            .tolist()
-                        )  # normalized xywh
-                        line = (
-                            (cls, *xywh, conf) if save_conf else (cls, *xywh)
-                        )  # label format
-                        label = int(line[0].detach().cpu().numpy().tolist())
+                    xywh = (
+                        (xyxy2xywh(torch.tensor(xyxy).view(1, 4)) / gn)
+                        .view(-1)
+                        .tolist()
+                    )  # normalized xywh
+                    line = (
+                        (cls, *xywh, conf) if save_conf else (cls, *xywh)
+                    )  # label format
+                    label = int(line[0].detach().cpu().numpy().tolist())
 
-                        xc, yc, w_box, h_box = line[1:]
-                        xc = float(xc) * w
-                        yc = float(yc) * h
-                        w_box = float(w_box) * w
-                        h_box = float(h_box) * h
+                    xc, yc, w_box, h_box = line[1:]
+                    xc = float(xc) * w
+                    yc = float(yc) * h
+                    w_box = float(w_box) * w
+                    h_box = float(h_box) * h
 
-                        x1 = int(xc - w_box / 2.0)
-                        y1 = int(yc - h_box / 2.0)
-                        x2 = int(xc + w_box / 2.0)
-                        y2 = int(yc + h_box / 2.0)
+                    x1 = int(xc - w_box / 2.0)
+                    y1 = int(yc - h_box / 2.0)
+                    x2 = int(xc + w_box / 2.0)
+                    y2 = int(yc + h_box / 2.0)
 
-                        labels_dict["filename"].append(image_name)
-                        labels_dict["xmin"].append(x1)
-                        labels_dict["ymin"].append(y1)
-                        labels_dict["xmax"].append(x2)
-                        labels_dict["ymax"].append(y2)
-                        labels_dict["class"].append(label)
+                    labels_dict["filename"].append(image_name)
+                    labels_dict["xmin"].append(x1)
+                    labels_dict["ymin"].append(y1)
+                    labels_dict["xmax"].append(x2)
+                    labels_dict["ymax"].append(y2)
+                    labels_dict["class"].append(label)
 
-                        if visualize:
-                            cv2.rectangle(im0s, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                    if visualize:
+                        cv2.rectangle(im0s, (x1, y1), (x2, y2), (0, 255, 0), 2)
             else:
                 labels_dict["filename"].append(image_name)
                 labels_dict["xmin"].append(0)
@@ -152,7 +142,7 @@ def run(
                 labels_dict["class"].append(0)
 
         if visualize:
-            out_path = os.path.join(str(save_dir), image_name)
+            out_path = os.path.join(output, "plots", image_name)
             cv2.imwrite(out_path, im0s)
 
         # Print time (inference-only)
@@ -169,33 +159,27 @@ def run(
 
     df = pd.DataFrame(labels_dict, index=None)
     np.savetxt(
-        "results.csv", df, delimiter=";", fmt=["%s", "%d", "%d", "%d", "%d", "%d"]
+        f"{output}/results.csv", df, delimiter=";", fmt=["%s", "%d", "%d", "%d", "%d", "%d"]
     )
 
 
 def parse_opt():
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--output", type=str, default=ROOT / "output", help="path to save model output"
+        "--output", type=str, default="output", help="path to save model output"
     )
     parser.add_argument(
         "--weights",
         nargs="+",
         type=str,
-        default=ROOT / "yolov5s.pt",
-        help="model path or triton URL",
+        default="best.pt",
+        help="model path",
     )
     parser.add_argument(
         "--source",
         type=str,
-        default=ROOT / "data/images",
-        help="file/dir/URL/glob/screen/0(webcam)",
-    )
-    parser.add_argument(
-        "--data",
-        type=str,
-        default=ROOT / "data/coco128.yaml",
-        help="(optional) dataset.yaml path",
+        default="data/images",
+        help="Path to image directory",
     )
     parser.add_argument(
         "--imgsz",
@@ -218,7 +202,6 @@ def parse_opt():
     parser.add_argument(
         "--device", default="", help="cuda device, i.e. 0 or 0,1,2,3 or cpu"
     )
-    parser.add_argument("--save-txt", action="store_true", help="save results to *.txt")
     parser.add_argument(
         "--save-conf", action="store_true", help="save confidences in --save-txt labels"
     )
@@ -231,7 +214,7 @@ def parse_opt():
 
 
 def main(opt):
-    check_requirements(ROOT / "requirements.txt", exclude=("tensorboard", "thop"))
+    check_requirements("requirements.txt", exclude=("tensorboard", "thop"))
     run(**vars(opt))
 
 
