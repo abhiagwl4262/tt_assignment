@@ -25,15 +25,15 @@ from utils.torch_utils import select_device, smart_inference_mode
 @smart_inference_mode()
 def run(
     output,
-    weights,  # model path or triton URL
-    source,  # file/dir/URL/glob/screen/0(webcam)
-    imgsz=(640, 640),  # inference size (height, width)
-    conf_thres=0.4,  # confidence threshold
-    iou_thres=0.4,  # NMS IOU threshold
-    max_det=1000,  # maximum detections per image
-    device="",  # cuda device, i.e. 0 or 0,1,2,3 or cpu
-    save_conf=False,  # save confidences in --save-txt labels
-    visualize=False # save images with bbs
+    weights,  
+    source,  
+    imgsz=(640, 640),  
+    conf_thres=0.4,  
+    iou_thres=0.4,
+    max_det=1000,
+    device="",
+    save_conf=False,
+    visualize=False
 ):
     source = str(source)
 
