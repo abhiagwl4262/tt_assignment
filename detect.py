@@ -236,7 +236,6 @@ def parse_opt():
 
 
 def main(opt):
-    check_requirements("requirements.txt", exclude=("tensorboard", "thop"))
     run(**vars(opt))
 
 
